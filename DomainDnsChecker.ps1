@@ -167,8 +167,9 @@ function Start-DNSCheck {
         return
     }
     
-    # Create output file with headers
-    "Domain,Nameserver,MX,SPF,DMARC" | Out-File -FilePath $OutputPath -Encoding utf8
+    # Create output file with headers - adding SEP=, as first line for Excel
+    "SEP=," | Out-File -FilePath $OutputPath -Encoding utf8
+    "Domain,Nameserver,MX,SPF,DMARC" | Out-File -FilePath $OutputPath -Encoding utf8 -Append
     
     # Read CSV file with UTF-8 encoding
     $csvContent = Import-Csv -Path $CsvPath -Encoding UTF8
