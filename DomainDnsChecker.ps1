@@ -42,13 +42,13 @@ function Get-DomainDnsRecords {
         [string]$Domain
     )
     
-    # Using New-Object instead of PSCustomObject for better compatibility
-    $result = New-Object -TypeName PSObject
-    Add-Member -InputObject $result -MemberType NoteProperty -Name "Domain" -Value $Domain
-    Add-Member -InputObject $result -MemberType NoteProperty -Name "Nameserver" -Value "none"
-    Add-Member -InputObject $result -MemberType NoteProperty -Name "MX" -Value "none"
-    Add-Member -InputObject $result -MemberType NoteProperty -Name "SPF" -Value "none"
-    Add-Member -InputObject $result -MemberType NoteProperty -Name "DMARC" -Value "none"
+    # Create a hashtable for results (most compatible approach)
+    $result = @{}
+    $result.Domain = $Domain
+    $result.Nameserver = "none"
+    $result.MX = "none"
+    $result.SPF = "none"
+    $result.DMARC = "none"
     
     try {
         # Convert domain to Punycode if it contains non-ASCII characters
@@ -57,21 +57,39 @@ function Get-DomainDnsRecords {
         # Get NS (Nameserver) records
         $nsRecords = Resolve-DnsName -Name $lookupDomain -Type NS -ErrorAction SilentlyContinue
         if ($nsRecords) {
-            $result.Nameserver = ($nsRecords.NameHost -join ", ")
+            $nsValues = @()
+            foreach ($record in $nsRecords) {
+                if ($record.NameHost) {
+                    $nsValues += $record.NameHost
+                }
+            }
+            if ($nsValues.Count -gt 0) {
+                $result.Nameserver = [string]::Join(", ", $nsValues)
+            }
         }
         
         # Get MX records
         $mxRecords = Resolve-DnsName -Name $lookupDomain -Type MX -ErrorAction SilentlyContinue
         if ($mxRecords) {
-            $result.MX = ($mxRecords | ForEach-Object { "$($_.NameExchange) (Preference: $($_.Preference))" } | Sort-Object -Property @{Expression={[int]($_ -split "Preference: ")[1].TrimEnd(')')}}) -join ", "
+            $mxValues = @()
+            foreach ($record in $mxRecords) {
+                if ($record.NameExchange) {
+                    $mxValues += "$($record.NameExchange) (Preference: $($record.Preference))"
+                }
+            }
+            if ($mxValues.Count -gt 0) {
+                $result.MX = [string]::Join(", ", $mxValues)
+            }
         }
         
         # Get SPF records (stored as TXT)
         $txtRecords = Resolve-DnsName -Name $lookupDomain -Type TXT -ErrorAction SilentlyContinue
         if ($txtRecords) {
-            $spfRecord = $txtRecords | Where-Object { $_.Strings -match "v=spf1" }
-            if ($spfRecord) {
-                $result.SPF = ($spfRecord.Strings -join " ")
+            foreach ($record in $txtRecords) {
+                if ($record.Strings -match "v=spf1") {
+                    $result.SPF = [string]::Join(" ", $record.Strings)
+                    break
+                }
             }
         }
         
@@ -79,9 +97,11 @@ function Get-DomainDnsRecords {
         $dmarcDomain = "_dmarc.$lookupDomain"
         $dmarcRecords = Resolve-DnsName -Name $dmarcDomain -Type TXT -ErrorAction SilentlyContinue
         if ($dmarcRecords) {
-            $dmarcRecord = $dmarcRecords | Where-Object { $_.Strings -match "v=DMARC1" }
-            if ($dmarcRecord) {
-                $result.DMARC = ($dmarcRecord.Strings -join " ")
+            foreach ($record in $dmarcRecords) {
+                if ($record.Strings -match "v=DMARC1") {
+                    $result.DMARC = [string]::Join(" ", $record.Strings)
+                    break
+                }
             }
         }
     }
@@ -89,7 +109,13 @@ function Get-DomainDnsRecords {
         Write-Warning "Error processing domain $Domain : $_"
     }
     
-    return $result
+    # Convert hashtable to CSV-friendly object
+    $obj = New-Object PSObject
+    foreach ($key in $result.Keys) {
+        $obj | Add-Member -MemberType NoteProperty -Name $key -Value $result[$key]
+    }
+    
+    return $obj
 }
 
 # Main script execution
@@ -112,19 +138,32 @@ function Start-DnsCheck {
     try {
         $domains = Import-Csv -Path $CsvPath
         
-        # Check if the CSV has a Domain column
-        $domainColumn = $domains | Get-Member -MemberType NoteProperty | Select-Object -First 1 -ExpandProperty Name
+        # Check if the CSV has columns
+        $properties = $domains | Get-Member -MemberType NoteProperty
+        if (-not $properties) {
+            Write-Error "CSV file does not contain any data or columns"
+            return
+        }
+        
+        # Get the first column name
+        $domainColumn = $properties | Select-Object -First 1 -ExpandProperty Name
         
         # Initialize results array
         $results = @()
         
         # Process each domain
-        $totalDomains = $domains.Count
+        $totalDomains = @($domains).Count
         $currentDomain = 0
         
         foreach ($row in $domains) {
             $currentDomain++
             $domain = $row.$domainColumn
+            
+            # Skip empty domains
+            if ([string]::IsNullOrWhiteSpace($domain)) {
+                Write-Warning "Skipping empty domain at row $currentDomain"
+                continue
+            }
             
             Write-Progress -Activity "Processing DNS Records" -Status "Domain: $domain" -PercentComplete (($currentDomain / $totalDomains) * 100)
             
