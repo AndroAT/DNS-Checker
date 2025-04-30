@@ -5,6 +5,27 @@
 # Set error action preference
 $ErrorActionPreference = "SilentlyContinue"
 
+# Function to convert IDN (Internationalized Domain Name) to Punycode/ACE
+function ConvertTo-AceEncoding {
+    [CmdletBinding()]
+    Param (
+        # Domain name
+        [Parameter(Mandatory = $true)]
+        [String]
+        $Domain
+    )
+    Process {
+        try {
+            $Idn = New-Object System.Globalization.IdnMapping
+            $Idn.GetAscii("$Domain")
+        }
+        catch {
+            Write-Host "Fehler bei der Konvertierung von $Domain, verwende Original"
+            return $Domain
+        }
+    }
+}
+
 # Simple function to check if domain contains non-ASCII characters
 function Test-HasNonAsciiChars {
     param (
@@ -14,8 +35,8 @@ function Test-HasNonAsciiChars {
     return $Domain -match '[^\x00-\x7F]'
 }
 
-# Function to convert IDN (Internationalized Domain Name) to Punycode
-function ConvertTo-Punycode {
+# Function to convert domain for DNS lookup
+function ConvertDomainForLookup {
     param (
         [string]$Domain
     )
@@ -25,19 +46,48 @@ function ConvertTo-Punycode {
         return $Domain
     }
     
-    # Simple warning for domains with non-ASCII characters
-    Write-Host "Warnung: Domain '$Domain' enthält Umlaute oder andere Sonderzeichen."
-    Write-Host "Diese werden möglicherweise nicht korrekt verarbeitet."
+    # For domains with umlauts, convert to ACE/Punycode
+    try {
+        $result = ConvertTo-AceEncoding -Domain $Domain
+        Write-Host "Konvertiert: $Domain -> $result"
+        return $result
+    }
+    catch {
+        Write-Host "Fehler bei der Konvertierung von $Domain, verwende Original"
+        return $Domain
+    }
+}
+
+# Function to check if domain exists
+function Test-DomainExists {
+    param (
+        [string]$Domain
+    )
     
-    # Just return the domain as-is since Punycode conversion is causing issues
-    return $Domain
+    try {
+        # Try to resolve any DNS record for the domain
+        $anyRecord = Resolve-DnsName -Name $Domain -Type A -ErrorAction SilentlyContinue
+        if ($anyRecord -eq $null) {
+            $anyRecord = Resolve-DnsName -Name $Domain -Type NS -ErrorAction SilentlyContinue
+        }
+        
+        return ($anyRecord -ne $null)
+    }
+    catch {
+        return $false
+    }
 }
 
 # Function to get nameserver records
 function Get-NameserverRecords {
     param (
-        [string]$Domain
+        [string]$Domain,
+        [bool]$DomainExists
     )
+    
+    if (-not $DomainExists) {
+        return "n/a"
+    }
     
     try {
         $nsRecords = Resolve-DnsName -Name $Domain -Type NS -ErrorAction SilentlyContinue
@@ -64,8 +114,13 @@ function Get-NameserverRecords {
 # Function to get MX records
 function Get-MXRecords {
     param (
-        [string]$Domain
+        [string]$Domain,
+        [bool]$DomainExists
     )
+    
+    if (-not $DomainExists) {
+        return "n/a"
+    }
     
     try {
         $mxRecords = Resolve-DnsName -Name $Domain -Type MX -ErrorAction SilentlyContinue
@@ -92,8 +147,13 @@ function Get-MXRecords {
 # Function to get SPF record
 function Get-SPFRecord {
     param (
-        [string]$Domain
+        [string]$Domain,
+        [bool]$DomainExists
     )
+    
+    if (-not $DomainExists) {
+        return "n/a"
+    }
     
     try {
         $txtRecords = Resolve-DnsName -Name $Domain -Type TXT -ErrorAction SilentlyContinue
@@ -118,8 +178,13 @@ function Get-SPFRecord {
 # Function to get DMARC record
 function Get-DMARCRecord {
     param (
-        [string]$Domain
+        [string]$Domain,
+        [bool]$DomainExists
     )
+    
+    if (-not $DomainExists) {
+        return "n/a"
+    }
     
     try {
         $dmarcDomain = "_dmarc.$Domain"
@@ -200,13 +265,22 @@ function Start-DNSCheck {
         Write-Host "Processing domain: $domain"
         
         # Convert domain to Punycode if needed
-        $lookupDomain = ConvertTo-Punycode -Domain $domain
+        $lookupDomain = ConvertDomainForLookup -Domain $domain
+        
+        # Check if domain exists
+        $domainExists = Test-DomainExists -Domain $lookupDomain
+        if (-not $domainExists) {
+            Write-Host "Domain existiert nicht: $domain" -ForegroundColor Yellow
+            # Write n/a for all fields for non-existent domains
+            "$domain,n/a,n/a,n/a,n/a" | Out-File -FilePath $OutputPath -Encoding utf8 -Append
+            continue
+        }
         
         # Get DNS records
-        $nameserver = Get-NameserverRecords -Domain $lookupDomain
-        $mx = Get-MXRecords -Domain $lookupDomain
-        $spf = Get-SPFRecord -Domain $lookupDomain
-        $dmarc = Get-DMARCRecord -Domain $lookupDomain
+        $nameserver = Get-NameserverRecords -Domain $lookupDomain -DomainExists $domainExists
+        $mx = Get-MXRecords -Domain $lookupDomain -DomainExists $domainExists
+        $spf = Get-SPFRecord -Domain $lookupDomain -DomainExists $domainExists
+        $dmarc = Get-DMARCRecord -Domain $lookupDomain -DomainExists $domainExists
         
         # Escape commas in CSV values
         $nameserver = $nameserver -replace ',', ';'
@@ -224,20 +298,27 @@ function Start-DNSCheck {
 # Get the script directory
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 
+# Set input and output paths
+$csvPath = Join-Path -Path $scriptPath -ChildPath "domains.csv"
+$timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+$outputFileName = "DomainDnsResults_$timestamp.csv"
+$outputPath = Join-Path -Path $scriptPath -ChildPath $outputFileName
+
 # Display welcome message
 Write-Host "========================================"
 Write-Host "DNS CHECKER - Domain DNS Record Analysis"
 Write-Host "========================================"
-Write-Host "Dieses Skript analysiert Domains aus einer CSV-Datei und exportiert DNS-Informationen."
+Write-Host "Dieses Skript analysiert Domains aus domains.csv und exportiert DNS-Informationen."
+Write-Host "Input: $csvPath"
+Write-Host "Output: $outputPath"
 Write-Host ""
 
-# Get input CSV path from user
-$csvPath = Read-Host "Geben Sie den Pfad zur CSV-Datei mit den Domains ein"
-
-# Generate output path in the same directory as the script
-$timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-$outputFileName = "DomainDnsResults_$timestamp.csv"
-$outputPath = Join-Path -Path $scriptPath -ChildPath $outputFileName
+# Check if domains.csv exists
+if (-not (Test-Path $csvPath)) {
+    Write-Host "FEHLER: domains.csv wurde nicht im Skriptverzeichnis gefunden!" -ForegroundColor Red
+    Write-Host "Bitte erstellen Sie eine CSV-Datei mit Domainnamen im Skriptverzeichnis." -ForegroundColor Red
+    exit
+}
 
 # Run the DNS check
 Write-Host "Starte Analyse..."
