@@ -5,38 +5,32 @@
 # Set error action preference
 $ErrorActionPreference = "SilentlyContinue"
 
+# Simple function to check if domain contains non-ASCII characters
+function Test-HasNonAsciiChars {
+    param (
+        [string]$Domain
+    )
+    
+    return $Domain -match '[^\x00-\x7F]'
+}
+
 # Function to convert IDN (Internationalized Domain Name) to Punycode
 function ConvertTo-Punycode {
     param (
         [string]$Domain
     )
     
-    try {
-        # Use .NET IdnMapping class to convert IDN to Punycode
-        $idn = New-Object System.Globalization.IdnMapping
-        
-        # Split domain into parts and convert each part
-        $domainParts = $Domain.Split('.')
-        $punyParts = @()
-        
-        for ($i = 0; $i -lt $domainParts.Length; $i++) {
-            $part = $domainParts[$i]
-            # Check if part contains non-ASCII characters
-            if ($part -match '[^\x00-\x7F]') {
-                $punyParts += $idn.GetAscii($part)
-            } else {
-                $punyParts += $part
-            }
-        }
-        
-        # Join parts back together
-        $punycodeResult = [String]::Join(".", $punyParts)
-        return $punycodeResult
+    # If no non-ASCII characters, return as is
+    if (-not (Test-HasNonAsciiChars -Domain $Domain)) {
+        return $Domain
     }
-    catch {
-        Write-Host "Could not convert domain to Punycode: $Domain"
-        return $Domain # Return original if conversion fails
-    }
+    
+    # Simple warning for domains with non-ASCII characters
+    Write-Host "Warnung: Domain '$Domain' enthält Umlaute oder andere Sonderzeichen."
+    Write-Host "Diese werden möglicherweise nicht korrekt verarbeitet."
+    
+    # Just return the domain as-is since Punycode conversion is causing issues
+    return $Domain
 }
 
 # Function to get nameserver records
