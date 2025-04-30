@@ -42,13 +42,13 @@ function Get-DomainDnsRecords {
         [string]$Domain
     )
     
-    $result = [PSCustomObject]@{
-        Domain = $Domain
-        Nameserver = "none"
-        MX = "none"
-        SPF = "none"
-        DMARC = "none"
-    }
+    # Using New-Object instead of PSCustomObject for better compatibility
+    $result = New-Object -TypeName PSObject
+    Add-Member -InputObject $result -MemberType NoteProperty -Name "Domain" -Value $Domain
+    Add-Member -InputObject $result -MemberType NoteProperty -Name "Nameserver" -Value "none"
+    Add-Member -InputObject $result -MemberType NoteProperty -Name "MX" -Value "none"
+    Add-Member -InputObject $result -MemberType NoteProperty -Name "SPF" -Value "none"
+    Add-Member -InputObject $result -MemberType NoteProperty -Name "DMARC" -Value "none"
     
     try {
         # Convert domain to Punycode if it contains non-ASCII characters
