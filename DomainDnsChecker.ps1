@@ -5,6 +5,10 @@
 # Set error action preference
 $ErrorActionPreference = "SilentlyContinue"
 
+# Ensure UTF-8 encoding for input/output
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 # Function to convert IDN (Internationalized Domain Name) to Punycode/ACE
 function ConvertTo-AceEncoding {
     [CmdletBinding()]
@@ -238,8 +242,8 @@ function Start-DNSCheck {
     # Create output file with headers
     "Domain,Nameserver,MX,SPF,DMARC" | Out-File -FilePath $OutputPath -Encoding utf8
     
-    # Read CSV file
-    $csvContent = Import-Csv -Path $CsvPath
+    # Read CSV file with UTF-8 encoding
+    $csvContent = Import-Csv -Path $CsvPath -Encoding UTF8
     
     # Check if CSV has content
     if ($csvContent -eq $null) {
@@ -279,11 +283,8 @@ function Start-DNSCheck {
         Write-Progress -Activity "Processing DNS Records" -Status "Domain: $domain" -PercentComplete (($currentRow / $totalRows) * 100)
         Write-Host "Processing domain: $domain"
         
-        # Convert domain to Punycode if needed
-        $lookupDomain = ConvertDomainForLookup -Domain $domain
-        
         # Check if domain exists
-        $domainExists = Test-DomainExists -Domain $lookupDomain
+        $domainExists = Test-DomainExists -Domain $domain
         if (-not $domainExists) {
             Write-Host "Domain existiert nicht: $domain" -ForegroundColor Yellow
             # Write n/a for all fields for non-existent domains
@@ -292,10 +293,10 @@ function Start-DNSCheck {
         }
         
         # Get DNS records
-        $nameserver = Get-NameserverRecords -Domain $lookupDomain -DomainExists $domainExists
-        $mx = Get-MXRecords -Domain $lookupDomain -DomainExists $domainExists
-        $spf = Get-SPFRecord -Domain $lookupDomain -DomainExists $domainExists
-        $dmarc = Get-DMARCRecord -Domain $lookupDomain -DomainExists $domainExists
+        $nameserver = Get-NameserverRecords -Domain $domain -DomainExists $domainExists
+        $mx = Get-MXRecords -Domain $domain -DomainExists $domainExists
+        $spf = Get-SPFRecord -Domain $domain -DomainExists $domainExists
+        $dmarc = Get-DMARCRecord -Domain $domain -DomainExists $domainExists
         
         # Escape commas in CSV values
         $nameserver = $nameserver -replace ',', ';'
