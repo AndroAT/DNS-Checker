@@ -1,81 +1,21 @@
 # DNS Checker Script
 # This script reads domains from a CSV file, performs DNS lookups, and exports results to CSV
-# Designed for maximum compatibility with restricted language modes
 
 # Set error action preference
 $ErrorActionPreference = "SilentlyContinue"
-
-# Ensure UTF-8 encoding for input/output
-$OutputEncoding = [System.Text.Encoding]::UTF8
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-
-# Function to convert IDN (Internationalized Domain Name) to Punycode/ACE
-function ConvertTo-AceEncoding {
-    [CmdletBinding()]
-    Param (
-        # Domain name
-        [Parameter(Mandatory = $true)]
-        [String]
-        $Domain
-    )
-    Process {
-        try {
-            $Idn = New-Object System.Globalization.IdnMapping
-            return $Idn.GetAscii("$Domain")
-        }
-        catch {
-            Write-Host "Fehler bei der Konvertierung von $Domain, verwende Original"
-            return $Domain
-        }
-    }
-}
-
-# Simple function to check if domain contains non-ASCII characters
-function Test-HasNonAsciiChars {
-    param (
-        [string]$Domain
-    )
-    
-    return $Domain -match '[^\x00-\x7F]'
-}
-
-# Function to convert domain for DNS lookup
-function ConvertDomainForLookup {
-    param (
-        [string]$Domain
-    )
-    
-    # If no non-ASCII characters, return as is
-    if (-not (Test-HasNonAsciiChars -Domain $Domain)) {
-        return $Domain
-    }
-    
-    # For domains with umlauts, convert to ACE/Punycode
-    try {
-        $result = ConvertTo-AceEncoding -Domain $Domain
-        Write-Host "Konvertiert: $Domain -> $result"
-        return $result
-    }
-    catch {
-        Write-Host "Fehler bei der Konvertierung von $Domain, verwende Original"
-        return $Domain
-    }
-}
 
 # Function to check if domain exists
 function Test-DomainExists {
     param (
         [string]$Domain
     )
-    
-    # Make sure domain is in Punycode format for DNS lookup
-    $lookupDomain = ConvertDomainForLookup -Domain $Domain
+   
     
     try {
         # Try to resolve any DNS record for the domain
-        $anyRecord = Resolve-DnsName -Name $lookupDomain -Type A -ErrorAction SilentlyContinue
+        $anyRecord = Resolve-DnsName -Name $Domain -Type A -ErrorAction SilentlyContinue
         if ($anyRecord -eq $null) {
-            $anyRecord = Resolve-DnsName -Name $lookupDomain -Type NS -ErrorAction SilentlyContinue
+            $anyRecord = Resolve-DnsName -Name $Domain -Type NS -ErrorAction SilentlyContinue
         }
         
         return ($anyRecord -ne $null)
@@ -96,11 +36,8 @@ function Get-NameserverRecords {
         return "n/a"
     }
     
-    # Make sure domain is in Punycode format for DNS lookup
-    $lookupDomain = ConvertDomainForLookup -Domain $Domain
-    
     try {
-        $nsRecords = Resolve-DnsName -Name $lookupDomain -Type NS -ErrorAction SilentlyContinue
+        $nsRecords = Resolve-DnsName -Name $Domain -Type NS -ErrorAction SilentlyContinue
         $nsValues = @()
         
         if ($nsRecords -ne $null) {
@@ -132,11 +69,8 @@ function Get-MXRecords {
         return "n/a"
     }
     
-    # Make sure domain is in Punycode format for DNS lookup
-    $lookupDomain = ConvertDomainForLookup -Domain $Domain
-    
     try {
-        $mxRecords = Resolve-DnsName -Name $lookupDomain -Type MX -ErrorAction SilentlyContinue
+        $mxRecords = Resolve-DnsName -Name $Domain -Type MX -ErrorAction SilentlyContinue
         $mxValues = @()
         
         if ($mxRecords -ne $null) {
@@ -168,11 +102,8 @@ function Get-SPFRecord {
         return "n/a"
     }
     
-    # Make sure domain is in Punycode format for DNS lookup
-    $lookupDomain = ConvertDomainForLookup -Domain $Domain
-    
     try {
-        $txtRecords = Resolve-DnsName -Name $lookupDomain -Type TXT -ErrorAction SilentlyContinue
+        $txtRecords = Resolve-DnsName -Name $Domain -Type TXT -ErrorAction SilentlyContinue
         
         if ($txtRecords -ne $null) {
             for ($i = 0; $i -lt $txtRecords.Length; $i++) {
@@ -202,11 +133,8 @@ function Get-DMARCRecord {
         return "n/a"
     }
     
-    # Make sure domain is in Punycode format for DNS lookup
-    $lookupDomain = ConvertDomainForLookup -Domain $Domain
-    
     try {
-        $dmarcDomain = "_dmarc.$lookupDomain"
+        $dmarcDomain = "_dmarc.$Domain"
         $dmarcRecords = Resolve-DnsName -Name $dmarcDomain -Type TXT -ErrorAction SilentlyContinue
         
         if ($dmarcRecords -ne $null) {
