@@ -4,7 +4,6 @@
 # Function to convert IDN (Internationalized Domain Name) to Punycode
 function ConvertTo-Punycode {
     param (
-        [Parameter(Mandatory = $true)]
         [string]$Domain
     )
     
@@ -26,7 +25,7 @@ function ConvertTo-Punycode {
         }
         
         # Join parts back together
-        $punycodeResult = $punyParts -join '.'
+        $punycodeResult = [String]::Join(".", $punyParts)
         return $punycodeResult
     }
     catch {
@@ -35,27 +34,76 @@ function ConvertTo-Punycode {
     }
 }
 
+# Function to create a simple custom object (compatible with all PowerShell versions)
+function New-SimpleObject {
+    $obj = New-Object -TypeName System.Object
+    
+    # Add Domain property
+    $objDomain = New-Object -TypeName System.Management.Automation.PSNoteProperty
+    $objDomain.Name = "Domain"
+    $objDomain.Value = $args[0]
+    $obj.psobject.Properties.Add($objDomain)
+    
+    # Add Nameserver property
+    $objNS = New-Object -TypeName System.Management.Automation.PSNoteProperty
+    $objNS.Name = "Nameserver"
+    $objNS.Value = "none"
+    $obj.psobject.Properties.Add($objNS)
+    
+    # Add MX property
+    $objMX = New-Object -TypeName System.Management.Automation.PSNoteProperty
+    $objMX.Name = "MX"
+    $objMX.Value = "none"
+    $obj.psobject.Properties.Add($objMX)
+    
+    # Add SPF property
+    $objSPF = New-Object -TypeName System.Management.Automation.PSNoteProperty
+    $objSPF.Name = "SPF"
+    $objSPF.Value = "none"
+    $obj.psobject.Properties.Add($objSPF)
+    
+    # Add DMARC property
+    $objDMARC = New-Object -TypeName System.Management.Automation.PSNoteProperty
+    $objDMARC.Name = "DMARC"
+    $objDMARC.Value = "none"
+    $obj.psobject.Properties.Add($objDMARC)
+    
+    return $obj
+}
+
+# Safely get DNS records
+function Get-SafeDnsRecords {
+    param (
+        [string]$Domain,
+        [string]$RecordType
+    )
+    
+    $result = @()
+    
+    try {
+        $result = Resolve-DnsName -Name $Domain -Type $RecordType -ErrorAction SilentlyContinue
+    } catch {
+        Write-Warning "Error resolving $RecordType records for $Domain : $_"
+    }
+    
+    return $result
+}
+
 # Function to get DNS records for a domain
 function Get-DomainDnsRecords {
     param (
-        [Parameter(Mandatory = $true)]
         [string]$Domain
     )
     
-    # Create a hashtable for results (most compatible approach)
-    $result = @{}
-    $result.Domain = $Domain
-    $result.Nameserver = "none"
-    $result.MX = "none"
-    $result.SPF = "none"
-    $result.DMARC = "none"
+    # Create a simple object
+    $result = New-SimpleObject $Domain
     
     try {
         # Convert domain to Punycode if it contains non-ASCII characters
         $lookupDomain = ConvertTo-Punycode -Domain $Domain
         
         # Get NS (Nameserver) records
-        $nsRecords = Resolve-DnsName -Name $lookupDomain -Type NS -ErrorAction SilentlyContinue
+        $nsRecords = Get-SafeDnsRecords -Domain $lookupDomain -RecordType "NS"
         if ($nsRecords) {
             $nsValues = @()
             foreach ($record in $nsRecords) {
@@ -69,11 +117,11 @@ function Get-DomainDnsRecords {
         }
         
         # Get MX records
-        $mxRecords = Resolve-DnsName -Name $lookupDomain -Type MX -ErrorAction SilentlyContinue
+        $mxRecords = Get-SafeDnsRecords -Domain $lookupDomain -RecordType "MX"
         if ($mxRecords) {
             $mxValues = @()
             foreach ($record in $mxRecords) {
-                if ($record.NameExchange) {
+                if ($record.NameExchange -and $record.Preference) {
                     $mxValues += "$($record.NameExchange) (Preference: $($record.Preference))"
                 }
             }
@@ -83,24 +131,30 @@ function Get-DomainDnsRecords {
         }
         
         # Get SPF records (stored as TXT)
-        $txtRecords = Resolve-DnsName -Name $lookupDomain -Type TXT -ErrorAction SilentlyContinue
+        $txtRecords = Get-SafeDnsRecords -Domain $lookupDomain -RecordType "TXT"
         if ($txtRecords) {
             foreach ($record in $txtRecords) {
-                if ($record.Strings -match "v=spf1") {
-                    $result.SPF = [string]::Join(" ", $record.Strings)
-                    break
+                if ($record.Strings) {
+                    $txtValue = [string]::Join(" ", $record.Strings)
+                    if ($txtValue -match "v=spf1") {
+                        $result.SPF = $txtValue
+                        break
+                    }
                 }
             }
         }
         
         # Get DMARC records (stored as TXT at _dmarc subdomain)
         $dmarcDomain = "_dmarc.$lookupDomain"
-        $dmarcRecords = Resolve-DnsName -Name $dmarcDomain -Type TXT -ErrorAction SilentlyContinue
+        $dmarcRecords = Get-SafeDnsRecords -Domain $dmarcDomain -RecordType "TXT"
         if ($dmarcRecords) {
             foreach ($record in $dmarcRecords) {
-                if ($record.Strings -match "v=DMARC1") {
-                    $result.DMARC = [string]::Join(" ", $record.Strings)
-                    break
+                if ($record.Strings) {
+                    $dmarcValue = [string]::Join(" ", $record.Strings)
+                    if ($dmarcValue -match "v=DMARC1") {
+                        $result.DMARC = $dmarcValue
+                        break
+                    }
                 }
             }
         }
@@ -109,22 +163,13 @@ function Get-DomainDnsRecords {
         Write-Warning "Error processing domain $Domain : $_"
     }
     
-    # Convert hashtable to CSV-friendly object
-    $obj = New-Object PSObject
-    foreach ($key in $result.Keys) {
-        $obj | Add-Member -MemberType NoteProperty -Name $key -Value $result[$key]
-    }
-    
-    return $obj
+    return $result
 }
 
 # Main script execution
 function Start-DnsCheck {
     param (
-        [Parameter(Mandatory = $true)]
         [string]$CsvPath,
-        
-        [Parameter(Mandatory = $false)]
         [string]$OutputPath
     )
     
@@ -136,36 +181,46 @@ function Start-DnsCheck {
     
     # Import domains from CSV
     try {
-        $domains = Import-Csv -Path $CsvPath
+        $csvContent = Import-Csv -Path $CsvPath
         
-        # Check if the CSV has columns
-        $properties = $domains | Get-Member -MemberType NoteProperty
-        if (-not $properties) {
-            Write-Error "CSV file does not contain any data or columns"
+        # Check if the CSV has any rows
+        if (-not $csvContent) {
+            Write-Error "CSV file does not contain any data"
             return
         }
         
-        # Get the first column name
-        $domainColumn = $properties | Select-Object -First 1 -ExpandProperty Name
+        # Get the first property name (column)
+        $firstRow = $csvContent[0]
+        $firstProperty = $null
+        foreach ($property in $firstRow.PSObject.Properties) {
+            $firstProperty = $property.Name
+            break
+        }
+        
+        if (-not $firstProperty) {
+            Write-Error "Could not determine column name in CSV file"
+            return
+        }
         
         # Initialize results array
         $results = @()
         
         # Process each domain
-        $totalDomains = @($domains).Count
-        $currentDomain = 0
+        $totalRows = 0
+        foreach ($row in $csvContent) { $totalRows++ }
+        $currentRow = 0
         
-        foreach ($row in $domains) {
-            $currentDomain++
-            $domain = $row.$domainColumn
+        foreach ($row in $csvContent) {
+            $currentRow++
+            $domain = $row.$firstProperty
             
             # Skip empty domains
-            if ([string]::IsNullOrWhiteSpace($domain)) {
-                Write-Warning "Skipping empty domain at row $currentDomain"
+            if ([string]::IsNullOrEmpty($domain) -or $domain.Trim() -eq "") {
+                Write-Warning "Skipping empty domain at row $currentRow"
                 continue
             }
             
-            Write-Progress -Activity "Processing DNS Records" -Status "Domain: $domain" -PercentComplete (($currentDomain / $totalDomains) * 100)
+            Write-Progress -Activity "Processing DNS Records" -Status "Domain: $domain" -PercentComplete (($currentRow / $totalRows) * 100)
             
             Write-Host "Processing domain: $domain"
             $dnsInfo = Get-DomainDnsRecords -Domain $domain
