@@ -99,7 +99,7 @@ function Start-DnsCheck {
         [string]$CsvPath,
         
         [Parameter(Mandatory = $false)]
-        [string]$OutputPath = "DomainDnsResults.csv"
+        [string]$OutputPath
     )
     
     # Check if CSV file exists
@@ -143,11 +143,23 @@ function Start-DnsCheck {
     }
 }
 
-# Example usage (uncomment to use)
-# Start-DnsCheck -CsvPath "C:\path\to\domains.csv" -OutputPath "C:\path\to\results.csv"
+# Get the script directory
+$scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# Instructions:
-# 1. CSV file should have a column containing domain names (any column name is accepted)
-# 2. Call the script with: 
-#    .\DomainDnsChecker.ps1
-#    Start-DnsCheck -CsvPath "path\to\domains.csv" -OutputPath "path\to\results.csv"
+# Get input CSV path from user
+Write-Host "========================================"
+Write-Host "DNS CHECKER - Domain DNS Record Analysis"
+Write-Host "========================================"
+Write-Host "Dieses Skript analysiert Domains aus einer CSV-Datei und exportiert DNS-Informationen."
+Write-Host ""
+
+$csvPath = Read-Host "Geben Sie den Pfad zur CSV-Datei mit den Domains ein"
+
+# Generate output path in the same directory as the script
+$timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+$outputFileName = "DomainDnsResults_$timestamp.csv"
+$outputPath = Join-Path -Path $scriptPath -ChildPath $outputFileName
+
+# Run the DNS check
+Write-Host "Starte Analyse..."
+Start-DnsCheck -CsvPath $csvPath -OutputPath $outputPath
