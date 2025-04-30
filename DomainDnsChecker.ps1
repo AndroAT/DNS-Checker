@@ -167,8 +167,6 @@ function Start-DNSCheck {
         return
     }
     
-    # Create output file with headers - adding SEP=, as first line for Excel
-    "SEP=," | Out-File -FilePath $OutputPath -Encoding utf8
     "Domain,Nameserver,MX,SPF,DMARC" | Out-File -FilePath $OutputPath -Encoding utf8 -Append
     
     # Read CSV file with UTF-8 encoding
@@ -192,50 +190,23 @@ function Start-DNSCheck {
         return
     }
     
-    # Count total domains for progress
-    $totalRows = 0
-    foreach ($row in $csvContent) { $totalRows++ }
-    
     # Process each domain
-    $currentRow = 0
+    $results = @()
+
     foreach ($row in $csvContent) {
-        $currentRow++
-        $domain = $row.$firstProperty
-        
-        # Skip empty domains
-        if ([string]::IsNullOrEmpty($domain)) {
-            Write-Host "Skipping empty domain at row $currentRow"
-            continue
+        ...
+        $results += [PSCustomObject]@{
+            Domain     = $domain
+            Nameserver = $nameserver
+            MX         = $mx
+            SPF        = $spf
+            DMARC      = $dmarc
         }
-        
-        # Show progress
-        Write-Progress -Activity "Processing DNS Records" -Status "Domain: $domain" -PercentComplete (($currentRow / $totalRows) * 100)
-        Write-Host "Processing domain: $domain"
-        
-        # Check if domain exists
-        $domainExists = Test-DomainExists -Domain $domain
-        if (-not $domainExists) {
-            Write-Host "Domain existiert nicht: $domain" -ForegroundColor Yellow
-            # Write n/a for all fields for non-existent domains
-            "$domain,n/a,n/a,n/a,n/a" | Out-File -FilePath $OutputPath -Encoding utf8 -Append
-            continue
-        }
-        
-        # Get DNS records
-        $nameserver = Get-NameserverRecords -Domain $domain -DomainExists $domainExists
-        $mx = Get-MXRecords -Domain $domain -DomainExists $domainExists
-        $spf = Get-SPFRecord -Domain $domain -DomainExists $domainExists
-        $dmarc = Get-DMARCRecord -Domain $domain -DomainExists $domainExists
-        
-        # Escape commas in CSV values
-        $nameserver = $nameserver -replace ',', ';'
-        $mx = $mx -replace ',', ';'
-        $spf = $spf -replace ',', ';'
-        $dmarc = $dmarc -replace ',', ';'
-        
-        # Write to CSV
-        "$domain,$nameserver,$mx,$spf,$dmarc" | Out-File -FilePath $OutputPath -Encoding utf8 -Append
     }
+
+# Write all results at once in CSV with header
+$results | Export-Csv -Path $OutputPath -Encoding UTF8 -NoTypeInformation
+
     
     Write-Host "Process completed. Results exported to: $OutputPath"
 }
